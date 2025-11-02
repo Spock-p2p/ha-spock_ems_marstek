@@ -1,0 +1,8 @@
+{
+  "name": "Spock EMS (Marstek))",
+  "render_readme": true,
+  "country": "ES",
+  "domains": ["spock_ems_marstek"],
+  "homeassistant": "2024.6.0",
+  "iot_class": "cloud_polling"
+}

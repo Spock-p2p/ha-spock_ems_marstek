@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuración Spock EMS (Marstek)",
+        "description": "Introduce tus credenciales de la API de Spock y los detalles locales de tu inversor Marstek.",
+        "data": {
+          "api_token": "Token API de Spock EMS",
+          "plant_id": "ID de Planta (Plant ID) de Spock EMS",
+          "modbus_ip": "Dirección IP del inversor Marstek",
+          "modbus_port": "Puerto Modbus UDP del inversor Marstek"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar con la API de Spock. Comprueba tu conexión a internet.",
+      "invalid_auth": "Token API de Spock EMS inválido. Por favor, compruébalo e inténtalo de nuevo.",
+      "unknown": "Ocurrió un error desconocido al validar el token de la API."
+    },
+    "abort": {
+      "already_configured": "Este ID de Planta ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Actualizar Ajustes de Spock EMS (Marstek)",
+        "description": "Modifica tus credenciales de API o los detalles locales de tu inversor Marstek.",
+        "data": {
+          "api_token": "Token API de Spock EMS",
+          "plant_id": "ID de Planta (Plant ID) de Spock EMS",
+          "modbus_ip": "Dirección IP del inversor Marstek",
+          "modbus_port": "Puerto Modbus UDP del inversor Marstek"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar con la API de Spock. Comprueba tu conexión a internet.",
+      "invalid_auth": "Token API de Spock EMS inválido. Por favor, compruébalo e inténtalo de nuevo.",
+      "unknown": "Ocurrió un error desconocido al validar el token de la API."
+    }
+  }
+}
+

@@ -1,0 +1,18 @@
+{
+  "domain": "spock_ems_marstek",
+  "name": "Spock EMS (Marstek)",
+  "documentation": "https://github.com/Spock-p2p/ha-spock_ems_marstek",
+  "issue_tracker": "https://github.com/Spock-p2p/ha-spock_ems_marstek/issues",
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "version": "1.0.0",
+  "codeowners": [
+    "@Spock-p2p"
+  ],
+  "requirements": [
+    "aiohttp"
+  ],
+  "loggers": [
+    "spock_ems_marstek"
+  ]
+}
