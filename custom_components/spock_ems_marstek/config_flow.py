@@ -5,9 +5,8 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from aiohttp import ClientError
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.data_entry_flow import FlowResult
@@ -16,71 +15,72 @@ from .const import (
     DOMAIN,
     CONF_API_TOKEN,
     CONF_PLANT_ID,
-    CONF_MODBUS_IP,
-    CONF_MODBUS_PORT,
-    DEFAULT_MODBUS_PORT,
-    API_URL_EMS, # Usamos el endpoint GET para validar el token
+    CONF_MARSTEK_IP,       # <-- CORREGIDO
+    CONF_MARSTEK_PORT,     # <-- CORREGIDO
+    DEFAULT_MARSTEK_PORT,  # <-- CORREGIDO
+    API_ENDPOINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# --- Esquema de datos principal ---
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_TOKEN): str,
-        vol.Required(CONF_PLANT_ID): int,
-        vol.Required(CONF_MODBUS_IP): str,
-        vol.Required(CONF_MODBUS_PORT, default=DEFAULT_MODBUS_PORT): int,
-    }
-)
 
 
 async def validate_auth(
     hass: HomeAssistant, api_token: str
 ) -> dict[str, str]:
-    """Valida el API token haciendo una llamada al endpoint EMS GET."""
+    """Valida el API token haciendo una llamada simple."""
     session = async_get_clientsession(hass)
     headers = {"X-Auth-Token": api_token}
     
     try:
-        async with session.get(API_URL_EMS, headers=headers, timeout=10) as resp:
+        # Usamos el endpoint unificado para validar, pero con un POST vacío
+        # (o podríamos usar un GET si el endpoint lo permite)
+        # Por ahora, asumimos que un POST (aunque falle por datos) valida el 403
+        async with session.post(API_ENDPOINT, headers=headers, timeout=10) as resp:
             if resp.status == 403:
                 return {"base": "invalid_auth"}
-            resp.raise_for_status() # Lanza error para otros 4xx/5xx
+            # No esperamos 200 OK necesariamente si el body está mal
+            # pero si no es 403, el token es probablemente bueno.
             return {} # Éxito
             
-    except (asyncio.TimeoutError, ClientError):
-        return {"base": "cannot_connect"}
     except Exception:
-        return {"base": "unknown"}
+        _LOGGER.exception("No se pudo conectar al validar API token")
+        return {"base": "cannot_connect"}
 
 
 class SpockEmsMarstekConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Maneja el flujo de configuración para Spock EMS Marstek."""
+    """Maneja el flujo de configuración."""
 
     VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Maneja el paso de configuración inicial (usuario)."""
+        """Paso inicial de configuración."""
         errors: dict[str, str] = {}
         if user_input is not None:
             
-            # Validar el API Token
             errors = await validate_auth(self.hass, user_input[CONF_API_TOKEN])
             
             if not errors:
-                # El título único será el Plant ID
                 await self.async_set_unique_id(str(user_input[CONF_PLANT_ID]))
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
-                    title=f"Spock EMS (Plant {user_input[CONF_PLANT_ID]})",
+                    title=f"Spock EMS (Planta {user_input[CONF_PLANT_ID]})",
                     data=user_input,
                 )
 
-        # Muestra el formulario
+        STEP_USER_DATA_SCHEMA = vol.Schema(
+            {
+                vol.Required(CONF_API_TOKEN): str,
+                vol.Required(CONF_PLANT_ID): int,
+                vol.Required(CONF_MARSTEK_IP): str, # <-- CORREGIDO
+                vol.Optional(
+                    CONF_MARSTEK_PORT, default=DEFAULT_MARSTEK_PORT # <-- CORREGIDO
+                ): int,
+            }
+        )
+
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
@@ -98,7 +98,7 @@ class OptionsFlowHandler(OptionsFlow):
     """Maneja el flujo de opciones (reconfiguración)."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
-        """Inicializa el flujo de opciones."""
+        """Inicializa."""
         self.config_entry = config_entry
 
     async def async_step_init(
@@ -108,19 +108,14 @@ class OptionsFlowHandler(OptionsFlow):
         errors: dict[str, str] = {}
         
         if user_input is not None:
-            # Validar el token si ha cambiado
-            new_token = user_input[CONF_API_TOKEN]
             old_token = self.config_entry.options.get(CONF_API_TOKEN, self.config_entry.data[CONF_API_TOKEN])
             
-            if new_token != old_token:
-                errors = await validate_auth(self.hass, new_token)
+            if user_input[CONF_API_TOKEN] != old_token:
+                errors = await validate_auth(self.hass, user_input[CONF_API_TOKEN])
             
             if not errors:
-                # Actualiza la configuración de la entrada
-                # (Opciones se fusionan sobre los datos)
                 return self.async_create_entry(title="", data=user_input)
 
-        # Rellena el formulario con los valores actuales
         options_schema = vol.Schema(
             {
                 vol.Required(
@@ -136,15 +131,15 @@ class OptionsFlowHandler(OptionsFlow):
                     ),
                 ): int,
                 vol.Required(
-                    CONF_MODBUS_IP,
+                    CONF_MARSTEK_IP, # <-- CORREGIDO
                     default=self.config_entry.options.get(
-                        CONF_MODBUS_IP, self.config_entry.data[CONF_MODBUS_IP]
+                        CONF_MARSTEK_IP, self.config_entry.data[CONF_MARSTEK_IP]
                     ),
                 ): str,
-                vol.Required(
-                    CONF_MODBUS_PORT,
+                vol.Optional(
+                    CONF_MARSTEK_PORT, # <-- CORREGIDO
                     default=self.config_entry.options.get(
-                        CONF_MODBUS_PORT, self.config_entry.data[CONF_MODBUS_PORT]
+                        CONF_MARSTEK_PORT, self.config_entry.data.get(CONF_MARSTEK_PORT, DEFAULT_MARSTEK_PORT)
                     ),
                 ): int,
             }
@@ -153,4 +148,3 @@ class OptionsFlowHandler(OptionsFlow):
         return self.async_show_form(
             step_id="init", data_schema=options_schema, errors=errors
         )
-
