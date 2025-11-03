@@ -6,7 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback # <--- ¡AÑADIDO!
 from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.data_entry_flow import FlowResult
@@ -15,9 +15,9 @@ from .const import (
     DOMAIN,
     CONF_API_TOKEN,
     CONF_PLANT_ID,
-    CONF_MARSTEK_IP,       # <-- CORREGIDO
-    CONF_MARSTEK_PORT,     # <-- CORREGIDO
-    DEFAULT_MARSTEK_PORT,  # <-- CORREGIDO
+    CONF_MARSTEK_IP,
+    CONF_MARSTEK_PORT,
+    DEFAULT_MARSTEK_PORT,
     API_ENDPOINT,
 )
 
@@ -74,9 +74,9 @@ class SpockEmsMarstekConfigFlow(ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_API_TOKEN): str,
                 vol.Required(CONF_PLANT_ID): int,
-                vol.Required(CONF_MARSTEK_IP): str, # <-- CORREGIDO
+                vol.Required(CONF_MARSTEK_IP): str,
                 vol.Optional(
-                    CONF_MARSTEK_PORT, default=DEFAULT_MARSTEK_PORT # <-- CORREGIDO
+                    CONF_MARSTEK_PORT, default=DEFAULT_MARSTEK_PORT
                 ): int,
             }
         )
@@ -86,7 +86,7 @@ class SpockEmsMarstekConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     @staticmethod
-    @callback
+    @callback # <--- Esta es la línea 89 que daba el error
     def async_get_options_flow(
         config_entry: ConfigEntry,
     ) -> OptionsFlowHandler:
@@ -131,13 +131,13 @@ class OptionsFlowHandler(OptionsFlow):
                     ),
                 ): int,
                 vol.Required(
-                    CONF_MARSTEK_IP, # <-- CORREGIDO
+                    CONF_MARSTEK_IP,
                     default=self.config_entry.options.get(
                         CONF_MARSTEK_IP, self.config_entry.data[CONF_MARSTEK_IP]
                     ),
                 ): str,
                 vol.Optional(
-                    CONF_MARSTEK_PORT, # <-- CORREGIDO
+                    CONF_MARSTEK_PORT,
                     default=self.config_entry.options.get(
                         CONF_MARSTEK_PORT, self.config_entry.data.get(CONF_MARSTEK_PORT, DEFAULT_MARSTEK_PORT)
                     ),
