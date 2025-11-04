@@ -1,44 +1,46 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "Spock EMS (Marstek) Setup",
-        "description": "Enter your Spock API credentials and local Marstek inverter details.",
-        "data": {
-          "api_token": "Spock EMS API Token",
-          "plant_id": "Spock EMS Plant ID",
-          "modbus_ip": "Marstek Inverter IP Address",
-          "modbus_port": "Marstek Modbus UDP Port"
+    "config": {
+        "step": {
+            "user": {
+                "title": "Spock EMS Marstek Setup",
+                "description": "Enter your API Token and Marstek inverter details.",
+                "data": {
+                    "api_token": "Spock EMS API Token",
+                    "plant_id": "Spock EMS Plant ID",
+                    "marstek_ip": "Marstek Inverter IP Address",
+                    "marstek_port": "Marstek Modbus UDP Port"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Unable to connect to Spock API. Check network.",
+            "invalid_auth": "Invalid API Token."
+        },
+        "abort": {
+            "already_configured": "This Plant ID is already configured."
         }
-      }
     },
-    "error": {
-      "cannot_connect": "Failed to connect to Spock API. Check your internet connection.",
-      "invalid_auth": "Invalid Spock EMS API Token. Please check and try again.",
-      "unknown": "An unknown error occurred while validating the API token."
-    },
-    "abort": {
-      "already_configured": "This Plant ID is already configured."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Update Spock EMS (Marstek) Settings",
-        "description": "Modify your API credentials or local Marstek inverter details.",
-        "data": {
-          "api_token": "Spock EMS API Token",
-          "plant_id": "Spock EMS Plant ID",
-          "modbus_ip": "Marstek Inverter IP Address",
-          "modbus_port": "Marstek Modbus UDP Port"
+    "options": {
+        "step": {
+            "init": {
+                "title": "Spock EMS Marstek Options",
+                "data": {
+                    "api_token": "Spock EMS API Token",
+                    "plant_id": "Spock EMS Plant ID",
+                    "marstek_ip": "Marstek Inverter IP Address",
+                    "marstek_port": "Marstek Modbus UDP Port"
+                }
+            }
+        },
+        "error": {
+            "invalid_auth": "Invalid API Token."
         }
-      }
     },
-    "error": {
-      "cannot_connect": "Failed to connect to Spock API. Check your internet connection.",
-      "invalid_auth": "Invalid Spock EMS API Token. Please check and try again.",
-      "unknown": "An unknown error occurred while validating the API token."
+    "entity": {
+        "switch": {
+            "polling_enabled": {
+                "name": "Enable API Polling"
+            }
+        }
     }
-  }
 }
-
