@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configura la integración desde la entrada de configuración."""
     
-    coordinator = SpockEnergyCoordinator(hass, entry)
+    coordinator = SpockEnergyCoordinator(hass, entry) 
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
@@ -90,27 +90,21 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_send_udp_command(self, payload: dict, timeout: int = 5) -> dict:
         """Envía un comando UDP al inversor Marstek y espera una respuesta."""
         loop = asyncio.get_running_loop()
-        
-        # Crear payload
         command = json.dumps(payload).encode('utf-8')
         
-        # Crear socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setblocking(False) # Esencial para asyncio
+        sock.setblocking(False) 
         
         try:
             _LOGGER.debug(f"Enviando UDP a {self.marstek_ip}:{self.marstek_port}: {command}")
             await loop.sock_sendto(sock, command, (self.marstek_ip, self.marstek_port))
             
-            # Esperar respuesta
             response, addr = await asyncio.wait_for(loop.sock_recvfrom(sock, 1024), timeout=timeout)
             
             _LOGGER.debug(f"Recibido UDP de {addr}: {response.decode('utf-8')}")
             
-            # Decodificar y parsear
             response_data = json.loads(response.decode('utf-8'))
             
-            # Validar respuesta
             if response_data.get("id") != payload.get("id") or "result" not in response_data:
                 raise ValueError(f"Respuesta UDP inesperada: {response_data}")
                 
@@ -133,6 +127,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         Ciclo de actualización unificado:
         1. Obtiene telemetría real del inversor (UDP)
+           Si falla, crea telemetría "cero".
         2. Envía telemetría a Spock (POST)
         3. Recibe comandos de Spock (en la respuesta del POST)
         """
@@ -146,19 +141,21 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.debug("Iniciando ciclo de actualización unificado de Spock EMS")
 
+        # --- INICIO DE LA LÓGICA MODIFICADA ---
+
+        telemetry_data: dict[str, str] = {}
+        
         try:
-            # 1. Obtener datos de telemetría del inversor
+            # 1. Intentar obtener datos reales del inversor
+            _LOGGER.debug("Intentando obtener telemetría real de Marstek UDP...")
             
-            # Comando 1: ES.GetStatus (Para potencias, SOC, capacidad, energía)
             es_status_payload = {"id": 1, "method": "ES.GetStatus", "params": {"id": 0}}
             es_data = await self._async_send_udp_command(es_status_payload)
             
-            # Comando 2: Bat.GetStatus (Para permisos de carga/descarga)
             bat_status_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
             bat_data = await self._async_send_udp_command(bat_status_payload)
 
-            # 2. Mapear los datos al formato de la API de Spock
-            # (Convirtiendo todo a string como en el ejemplo hardcoded)
+            # 2. Mapear los datos reales
             telemetry_data = {
                 "plant_id": str(self.plant_id),
                 "bat_soc": str(es_data.get("bat_soc")),
@@ -167,29 +164,40 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "ongrid_power": str(es_data.get("ongrid_power")),
                 "bat_charge_allowed": str(bat_data.get("charg_ag", False)).lower(),
                 "bat_discharge_allowed": str(bat_data.get("dischrg_ag", False)).lower(),
-                "bat_capacity": str(es_data.get("bat_cap")), # 'bat_cap' de ES.GetStatus
+                "bat_capacity": str(es_data.get("bat_cap")),
                 "total_grid_output_energy": str(es_data.get("total_grid_output_energy"))
             }
-            
-        except asyncio.TimeoutError:
-            raise UpdateFailed("Timeout al contactar con el inversor Marstek por UDP")
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
-            _LOGGER.warning(f"Error al procesar datos de Marstek (¿respuesta inesperada?): {e}")
-            raise UpdateFailed(f"Error al procesar datos de Marstek: {e}")
-        except Exception as e:
-            # Errores genéricos de UDP (ej. Connection refused, Network unreachable)
-            _LOGGER.error(f"Error de comunicación UDP con Marstek: {e}")
-            raise UpdateFailed(f"Error de comunicación con Marstek: {e}")
+            _LOGGER.debug("Telemetría real obtenida de Marstek.")
 
-        # 3. Enviar telemetría y recibir comandos (Lógica de Spock API)
-        _LOGGER.debug("Enviando telemetría y obteniendo comandos desde %s", API_ENDPOINT)
+        except Exception as e:
+            # 3. Si la comunicación UDP falla (Timeout, JSON error, etc.)
+            _LOGGER.warning(f"No se pudo obtener telemetría de Marstek UDP: {e}. Enviando telemetría a cero.")
+            
+            # Construir telemetría con valores a cero/false
+            telemetry_data = {
+                "plant_id": str(self.plant_id),
+                "bat_soc": "0",
+                "bat_power": "0",
+                "pv_power": "0",
+                "ongrid_power": "0",
+                "bat_charge_allowed": "false",
+                "bat_discharge_allowed": "false",
+                "bat_capacity": "0", # Asumimos 0 si no se puede leer
+                "total_grid_output_energy": "0" # Asumimos 0 si no se puede leer
+            }
+
+        # --- FIN DE LA LÓGICA MODIFICADA ---
+
+        # 4. Enviar telemetría y recibir comandos (Lógica de Spock API)
+        # Esta sección ahora se ejecuta siempre, ya sea con datos reales o con ceros.
+        _LOGGER.debug("Enviando telemetría a Spock API: %s", telemetry_data)
         headers = {"X-Auth-Token": self.api_token}
         
         try:
             async with self._session.post(
                 API_ENDPOINT, 
                 headers=headers, 
-                json=telemetry_data # <-- Se usa la telemetría real
+                json=telemetry_data 
             ) as resp:
                 
                 if resp.status == 403:
@@ -207,8 +215,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
                 
-                # TODO: Aquí, en el futuro, se procesarían los comandos
-                # self.process_commands(data)
+                # TODO: Procesar comandos
                 
                 return data
 
