@@ -3,7 +3,7 @@
 DOMAIN = "spock_ems_marstek"
 
 # --- API ---
-API_ENDPOINT = "https://flex.spock.es/api/ems_marstek"
+API_ENDPOINT = "https://ems-ha.spock.es/api/ems_marstek"
 
 # --- Constantes de Configuración ---
 CONF_API_TOKEN = "api_token"
