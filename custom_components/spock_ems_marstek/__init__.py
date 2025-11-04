@@ -130,7 +130,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 data = await resp.json(content_type=None)
                 
                 # Validación mínima de la respuesta (comandos)
-                if not isinstance(data, dict) or "battery_operation" not in data:
+                if not isinstance(data, dict) or "status" not in data or "operation_mode" not in data:
                     _LOGGER.warning("Formato de respuesta de comandos inesperado: %s", data)
                     raise UpdateFailed(f"Formato de respuesta inesperado: {data}")
 
