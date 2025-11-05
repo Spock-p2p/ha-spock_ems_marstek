@@ -32,8 +32,7 @@ async def validate_auth(
     headers = {"X-Auth-Token": api_token}
     
     try:
-        # Usamos el endpoint unificado para validar, pero con un POST vacío
-        # (o podríamos usar un GET si el endpoint lo permite)
+
         # Por ahora, asumimos que un POST (aunque falle por datos) valida el 403
         async with session.post(API_ENDPOINT, headers=headers, timeout=10) as resp:
             if resp.status == 403:
@@ -86,7 +85,7 @@ class SpockEmsMarstekConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     @staticmethod
-    @callback # <--- Esta es la línea 89 que daba el error
+    @callback 
     def async_get_options_flow(
         config_entry: ConfigEntry,
     ) -> OptionsFlowHandler:
