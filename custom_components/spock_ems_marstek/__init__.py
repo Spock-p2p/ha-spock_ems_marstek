@@ -141,8 +141,6 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.debug("Iniciando ciclo de actualización unificado de Spock EMS")
 
-        # --- INICIO DE LA LÓGICA MODIFICADA ---
-
         telemetry_data: dict[str, str] = {}
         
         try:
@@ -185,8 +183,6 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "bat_capacity": "0", # Asumimos 0 si no se puede leer
                 "total_grid_output_energy": "0" # Asumimos 0 si no se puede leer
             }
-
-        # --- FIN DE LA LÓGICA MODIFICADA ---
 
         # 4. Enviar telemetría y recibir comandos (Lógica de Spock API)
         # Esta sección ahora se ejecuta siempre, ya sea con datos reales o con ceros.
