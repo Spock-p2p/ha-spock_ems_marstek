@@ -53,31 +53,26 @@ sensor:
     plant_id: "TU_PLANT_ID"
     auth_token: "TU_X_AUTH_TOKEN_SECRETO"
     scan_interval: 60 # Opcional: intervalo en segundos (default: 60)
-Parámetros de Configuración
-platform (Requerido): Debe ser spock_ems_marstek.
 
-plant_id (Requerido): El identificador único (plant_id) de tu instalación.
+## Parámetros de Configuración
 
-auth_token (Requerido): El token de autenticación (X-Auth-Token) necesario para acceder a la API.
+1.   Platform (Requerido): Debe ser spock_ems_marstek.
+2.   Plant_id (Requerido): El identificador único (plant_id) de tu instalación.
+3.   Auth_token (Requerido): El token de autenticación (X-Auth-Token) necesario para acceder a la API.
 
-scan_interval (Opcional): Frecuencia con la que se actualizan los datos desde la API. El valor por defecto es 60 segundos.
+## Entidades Creadas
 
-Entidades Creadas
 Una vez configurada y reiniciada, la integración creará automáticamente las siguientes entidades (con el prefijo sensor.spock_ems_):
 
-sensor.spock_ems_battery_soc: Estado de Carga de la Batería (%)
-
-sensor.spock_ems_battery_power: Potencia de la Batería (W) - Positivo (cargando), Negativo (descargando)
-
-sensor.spock_ems_pv_power: Potencia Fotovoltaica (W)
-
-sensor.spock_ems_grid_power: Potencia de la Red (W) - Positivo (importando), Negativo (exportando)
-
-sensor.spock_ems_battery_charge_allowed: Estado de Carga de Batería (On/Off)
-
-sensor.spock_ems_battery_discharge_allowed: Estado de Descarga de Batería (On/Off)
+1.   sensor.spock_ems_battery_soc: Estado de Carga de la Batería (%)
+2.   sensor.spock_ems_battery_power: Potencia de la Batería (W) - Positivo (cargando), Negativo (descargando)
+3.   sensor.spock_ems_pv_power: Potencia Fotovoltaica (W)
+4.   sensor.spock_ems_grid_power: Potencia de la Red (W) - Positivo (importando), Negativo (exportando)
+5.   sensor.spock_ems_battery_charge_allowed: Estado de Carga de Batería (On/Off)
+6.   sensor.spock_ems_battery_discharge_allowed: Estado de Descarga de Batería (On/Off)
 
 (Nota: Los nombres de las entidades pueden variar ligeramente. Revisa tu panel de "Entidades" en Home Assistant después de la instalación).
 
-Contribuciones
+### Contribuciones
+
 Las contribuciones son bienvenidas. Por favor, abre un "issue" para reportar bugs o un "pull request" para proponer mejoras.
