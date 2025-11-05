@@ -6,6 +6,8 @@ Esta es una integración personalizada para [Home Assistant (HA)](https://www.ho
 
 La integración se conecta a los endpoints en la nube de Spock para obtener telemetría en tiempo real de tu instalación (planta).
 
+** Para utilizar esta integración es imprescindible crear un cuenta en Spock: https://spock.es/register **
+
 ## Características
 
 * Obtiene datos de telemetría de la API en la nube de Spock.
