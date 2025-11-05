@@ -47,7 +47,6 @@ La integración se conecta a los endpoints en la nube de Spock para obtener tele
 
 Una vez instalada la integración, debes añadir la siguiente configuración a tu archivo `configuration.yaml`:
 
-```yaml
 sensor:
   - platform: spock_ems_marstek
     plant_id: "TU_PLANT_ID"
