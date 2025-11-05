@@ -2,13 +2,13 @@
     "config": {
         "step": {
             "user": {
-                "title": "Configuración de Spock EMS Marstek",
+                "title": "Configuración de Spock EMS para baterías Marstek",
                 "description": "Introduce tu API Token y los detalles del inversor Marstek.",
                 "data": {
                     "api_token": "Spock EMS API Token",
                     "plant_id": "Spock EMS ID de Planta",
                     "marstek_ip": "Dirección IP del Inversor Marstek",
-                    "marstek_port": "Puerto Modbus UDP de Marstek"
+                    "marstek_port": "Puerto UDP"
                 }
             }
         },
@@ -28,7 +28,7 @@
                     "api_token": "Spock EMS API Token",
                     "plant_id": "Spock EMS ID de Planta",
                     "marstek_ip": "Dirección IP del Inversor Marstek",
-                    "marstek_port": "Puerto Modbus UDP de Marstek"
+                    "marstek_port": "Puerto UDP"
                 }
             }
         },
@@ -39,7 +39,7 @@
     "entity": {
         "switch": {
             "polling_enabled": {
-                "name": "Habilitar Sondeo API"
+                "name": "Habilitar Scheduler"
             }
         }
     }
