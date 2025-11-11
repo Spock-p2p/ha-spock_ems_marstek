@@ -171,7 +171,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---- Ciclo ----
     async def _async_update_data(self) -> dict[str, Any]:
         """
-        1) Lee telemetría (EM.GetStatus + Bat.GetStatus)
+        1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode)
         2) Envía telemetría a Spock
         3) Devuelve comandos/estado de Spock
         """
@@ -186,24 +186,34 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         telemetry_data: dict[str, str] = {}
         em_data: dict[str, Any] | None = None
         bat_data: dict[str, Any] | None = None
+        mode_data: dict[str, Any] | None = None
 
         # 1) Lecturas
         try:
-            # En tu fw v139, EM.GetStatus devuelve total_power y por fases
+            # Energy meter (red): total_power por fases/total
             em_payload = {"id": 1, "method": "EM.GetStatus", "params": {"id": 0}}
-            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=2)
+            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=1)
         except Exception as e:
             _LOGGER.warning("EM.GetStatus falló: %r", e)
 
         try:
+            # BMS/batería: SOC / flags / capacidades
             bat_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
-            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=2)
+            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=0)
             _LOGGER.debug("Bat.GetStatus (raw): %s", bat_data)
         except Exception as e:
             _LOGGER.warning("Bat.GetStatus falló: %r", e)
 
+        try:
+            # ES.GetMode: trae 'mode', 'ongrid_power', 'offgrid_power', 'bat_soc'
+            mode_payload = {"id": 3, "method": "ES.GetMode", "params": {"id": 0}}
+            mode_data = await self._async_send_udp_command(mode_payload, timeout=5.0, retry=0)
+            _LOGGER.debug("ES.GetMode (raw): %s", mode_data)
+        except Exception as e:
+            _LOGGER.warning("ES.GetMode falló: %r", e)
+
         # 2) Mapeo normalizado
-        if em_data is None and bat_data is None:
+        if em_data is None and bat_data is None and mode_data is None:
             _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando ceros.")
             telemetry_data = {
                 "plant_id": str(self.plant_id),
@@ -217,33 +227,40 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "total_grid_output_energy": "0",
             }
         else:
-            b = bat_data or {}
             e = em_data or {}
+            b = bat_data or {}
+            m = mode_data or {}
 
-            # Batería
-            bat_soc = self._pick(b, "bat_soc", "soc", default=0)
-            bat_power = self._pick(b, "bat_power", "power", "p_bat", default=0)  # muchos FW no lo exponen
-            chg_allowed = bool(self._pick(b, "charg_ag", "charg_flag", default=False))
-            dchg_allowed = bool(self._pick(b, "dischrg_ag", "dischrg_flag", default=False))
-            bat_cap = self._pick(b, "bat_capacity", "bat_cap", default=0)
-            rated_cap = self._pick(b, "rated_capacity", default=None)
-            bat_capacity = rated_cap if (bat_cap in (0, None) and rated_cap is not None) else bat_cap
+            # ---- Batería: SOC y flags ----
+            soc = b.get("soc", b.get("bat_soc", m.get("bat_soc", 0)))
+            charg_flag = bool(b.get("charg_flag", b.get("charg_ag", False)))
+            discharg_flag = bool(b.get("dischrg_flag", b.get("dischrg_ag", False)))
 
-            # Energía/red (EM.GetStatus)
-            # total_power: potencia total medida en red (signo según pinza/instalación).
-            ongrid_power = self._pick(e, "total_power", default=0)
-            # pv_power no llega por EM.GetStatus en tu FW; dejamos 0 por ahora.
-            pv_power = 0
+            # ---- Batería: potencia ----
+            # Requisito del usuario: usar ES.GetMode.ongrid_power como bat_power
+            bat_power = m.get("ongrid_power", 0)
+
+            # ---- Capacidad ----
+            # Si existe rated_capacity, usarla como bat_capacity (evitando null)
+            bat_cap = b.get("bat_capacity", b.get("bat_cap"))
+            rated_cap = b.get("rated_capacity")
+            if rated_cap is not None:
+                bat_capacity = rated_cap
+            else:
+                bat_capacity = bat_cap if bat_cap is not None else 0
+
+            # ---- Red ----
+            ongrid_power = e.get("total_power", 0)  # si EM no da datos, queda 0
 
             telemetry_data = {
                 "plant_id": str(self.plant_id),
-                "bat_soc": str(bat_soc),
-                "bat_power": str(bat_power or 0),
-                "pv_power": str(pv_power),
-                "ongrid_power": str(ongrid_power),
-                "bat_charge_allowed": str(chg_allowed).lower(),
-                "bat_discharge_allowed": str(dchg_allowed).lower(),
-                "bat_capacity": str(bat_capacity or 0),
+                "bat_soc": str(soc or 0),
+                "bat_power": str(bat_power or 0),            # desde ES.GetMode
+                "pv_power": "0",                              # no disponible en tu FW actual
+                "ongrid_power": str(ongrid_power),           # desde EM.GetStatus
+                "bat_charge_allowed": str(charg_flag).lower(),
+                "bat_discharge_allowed": str(discharg_flag).lower(),
+                "bat_capacity": str(bat_capacity),           # usa rated_capacity si existe
                 "total_grid_output_energy": "0",
             }
 
