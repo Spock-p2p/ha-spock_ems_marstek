@@ -87,6 +87,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ---- Utils ----
     def _resolve_local_ip_for(self, dst_ip: str) -> str:
+        """Autodetecta la IP local adecuada hacia dst_ip."""
         if self._local_ip:
             return self._local_ip
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -99,6 +100,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._local_ip  # type: ignore[return-value]
 
     def _pick(self, d: dict | None, *keys, default=None):
+        """Devuelve el primer valor existente en d de entre keys."""
         if not d:
             return default
         for k in keys:
@@ -241,13 +243,18 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             bat_power = m.get("ongrid_power", 0)
 
             # ---- Capacidad ----
-            # Si existe rated_capacity, usarla como bat_capacity (evitando null)
-            bat_cap = b.get("bat_capacity", b.get("bat_cap"))
-            rated_cap = b.get("rated_capacity")
-            if rated_cap is not None:
-                bat_capacity = rated_cap
-            else:
-                bat_capacity = bat_cap if bat_cap is not None else 0
+            # Prioriza rated_capacity; si no, bat_capacity/bat_cap; normaliza a entero >=0
+            raw_rated = b.get("rated_capacity")
+            raw_bcap = b.get("bat_capacity", b.get("bat_cap"))
+            try:
+                cap = raw_rated if raw_rated is not None else (raw_bcap if raw_bcap is not None else 0)
+                cap_num = float(cap)
+                if cap_num < 0:
+                    cap_num = 0.0
+                bat_capacity = int(round(cap_num))
+            except Exception:
+                bat_capacity = 0
+            _LOGGER.debug("Capacidad (rated=%r, bat=%r) => enviada=%s", raw_rated, raw_bcap, bat_capacity)
 
             # ---- Red ----
             ongrid_power = e.get("total_power", 0)  # si EM no da datos, queda 0
