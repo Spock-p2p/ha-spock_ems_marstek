@@ -6,7 +6,7 @@ import logging
 import json
 import socket
 from datetime import timedelta
-from typing import Any, Tuple
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -36,7 +36,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "is_enabled": True,
     }
 
-    # Primer refresh para poblar estado
     await asyncio.sleep(2)
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.info("Spock EMS Marstek: Primer fetch realizado.")
@@ -68,7 +67,6 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator que gestiona el ciclo de API unificado."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Inicializa el coordinador."""
         self.hass = hass
         self.config_entry = entry
         self.config = {**entry.data, **entry.options}
@@ -85,15 +83,10 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL_S),
         )
 
-        # Cache de IP local resuelta hacia la batería
         self._local_ip: str | None = None
 
-    # ---------- Utilidades UDP específicas de Marstek ----------
-
+    # ---- Utils ----
     def _resolve_local_ip_for(self, dst_ip: str) -> str:
-        """
-        Autodetecta la IP local apropiada hacia dst_ip usando un "connect" UDP de mentira.
-        """
         if self._local_ip:
             return self._local_ip
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -105,19 +98,20 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.debug("IP local detectada para %s -> %s", dst_ip, self._local_ip)
         return self._local_ip  # type: ignore[return-value]
 
+    def _pick(self, d: dict | None, *keys, default=None):
+        if not d:
+            return default
+        for k in keys:
+            if k in d and d[k] is not None:
+                return d[k]
+        return default
+
     async def _async_send_udp_command(
         self, payload: dict, timeout: float = 5.0, retry: int = 1
     ) -> dict:
         """
-        Envía un comando UDP a Marstek y espera una respuesta.
-        Requisitos del equipo:
-          - Mismo puerto en ORIGEN y DESTINO (marstek_port)
-          - Misma LAN
-        Estrategia:
-          - bind(local_ip, marstek_port)
-          - sendto + recvfrom (buffer amplio)
-          - valida id y estructura
-          - reintenta 1 vez opcionalmente
+        Envía un comando UDP a Marstek y espera respuesta.
+        Requisitos: mismo puerto en origen y destino (marstek_port), misma LAN.
         """
         loop = asyncio.get_running_loop()
         local_ip = self._resolve_local_ip_for(self.marstek_ip)
@@ -132,9 +126,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sock.setblocking(False)
 
             try:
-                # Bind estricto a la IP local correcta y al mismo puerto que el destino
                 sock.bind((local_ip, self.marstek_port))
-
                 _LOGGER.debug(
                     "UDP %s -> %s:%s (origen %s:%s) payload=%s",
                     local_ip,
@@ -145,22 +137,16 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     command,
                 )
 
-                await loop.sock_sendto(
-                    sock, command, (self.marstek_ip, self.marstek_port)
-                )
+                await loop.sock_sendto(sock, command, (self.marstek_ip, self.marstek_port))
 
-                # Espera respuesta
                 response, addr = await asyncio.wait_for(
                     loop.sock_recvfrom(sock, 16384), timeout=timeout
                 )
-
                 _LOGGER.debug("UDP RX de %s: %s", addr, response.decode("utf-8"))
-                response_data = json.loads(response.decode("utf-8"))
 
-                # Validación básica
+                response_data = json.loads(response.decode("utf-8"))
                 if response_data.get("id") != payload.get("id") or "result" not in response_data:
                     raise ValueError(f"Respuesta UDP inesperada: {response_data}")
-
                 return response_data["result"]
 
             except asyncio.TimeoutError:
@@ -173,62 +159,50 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 if attempt >= retry:
                     raise
-            except json.JSONDecodeError as je:
-                _LOGGER.warning(
-                    "Respuesta no-JSON de Marstek para %s: %s",
-                    payload.get("method"),
-                    je,
-                )
-                raise
-            except OSError as ose:
-                _LOGGER.error("Error de socket UDP: %s", ose)
-                raise
             finally:
                 try:
                     sock.close()
                 except Exception:
                     pass
 
-        # No debería alcanzarse
         raise asyncio.TimeoutError("Sin respuesta tras reintentos")
 
-    # ---------- Ciclo de actualización ----------
-
+    # ---- Ciclo ----
     async def _async_update_data(self) -> dict[str, Any]:
         """
-        Ciclo de actualización unificado:
-        1) Lee telemetría por UDP (ES.GetStatus + Bat.GetStatus)
-        2) Envía telemetría a Spock (POST)
+        1) Lee telemetría (EM.GetStatus + Bat.GetStatus)
+        2) Envía telemetría a Spock
         3) Devuelve comandos/estado de Spock
         """
         entry_id = self.config_entry.entry_id
         is_enabled = self.hass.data[DOMAIN].get(entry_id, {}).get("is_enabled", True)
         if not is_enabled:
-            _LOGGER.debug("Sondeo API deshabilitado por el interruptor. Omitiendo ciclo.")
+            _LOGGER.debug("Sondeo API deshabilitado. Omitiendo ciclo.")
             return self.data
 
         _LOGGER.debug("Iniciando ciclo de actualización unificado de Spock EMS")
 
         telemetry_data: dict[str, str] = {}
-
-        # 1) Lectura UDP (intentamos ambos; si uno falla seguimos con el otro)
-        es_data: dict[str, Any] | None = None
+        em_data: dict[str, Any] | None = None
         bat_data: dict[str, Any] | None = None
 
+        # 1) Lecturas
         try:
-            es_status_payload = {"id": 1, "method": "ES.GetStatus", "params": {"id": 0}}
-            es_data = await self._async_send_udp_command(es_status_payload, timeout=5.0, retry=1)
+            # En tu fw v139, EM.GetStatus devuelve total_power y por fases
+            em_payload = {"id": 1, "method": "EM.GetStatus", "params": {"id": 0}}
+            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=1)
         except Exception as e:
-            _LOGGER.warning("ES.GetStatus falló: %s", e)
+            _LOGGER.warning("EM.GetStatus falló: %r", e)
 
         try:
-            bat_status_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
-            bat_data = await self._async_send_udp_command(bat_status_payload, timeout=5.0, retry=1)
+            bat_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
+            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=1)
         except Exception as e:
-            _LOGGER.warning("Bat.GetStatus falló: %s", e)
+            _LOGGER.warning("Bat.GetStatus falló: %r", e)
 
-        if es_data is None and bat_data is None:
-            _LOGGER.warning("No se pudo obtener telemetría de Marstek (ambos métodos fallaron). Enviando ceros.")
+        # 2) Mapeo normalizado
+        if em_data is None and bat_data is None:
+            _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando ceros.")
             telemetry_data = {
                 "plant_id": str(self.plant_id),
                 "bat_soc": "0",
@@ -241,23 +215,39 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "total_grid_output_energy": "0",
             }
         else:
-            # 2) Mapear datos reales con preferencia por la fuente correcta
-            #    - Batería: Bat.GetStatus
-            #    - PV / red / carga: ES.GetStatus
+            b = bat_data or {}
+            e = em_data or {}
+
+            # Batería
+            bat_soc      = self._pick(b, "bat_soc", "soc", default=0)
+            bat_power    = self._pick(b, "bat_power", "power", "p_bat", default=0)  # muchos FW no lo exponen
+            chg_allowed  = bool(self._pick(b, "charg_ag", "charg_flag", default=False))
+            dchg_allowed = bool(self._pick(b, "dischrg_ag", "dischrg_flag", default=False))
+            bat_cap      = self._pick(b, "bat_capacity", "bat_cap", default=0)
+            rated_cap    = self._pick(b, "rated_capacity", default=None)
+            bat_capacity = rated_cap if (bat_cap in (0, None) and rated_cap is not None) else bat_cap
+
+            # Energía/red (EM.GetStatus)
+            # total_power: potencia total medida en red (signo según pinza/instalación).
+            ongrid_power = self._pick(e, "total_power", default=0)
+            # pv_power no llega por EM.GetStatus en tu FW; dejamos 0 por ahora.
+            pv_power     = 0
+
             telemetry_data = {
                 "plant_id": str(self.plant_id),
-                "bat_soc": str((bat_data or {}).get("bat_soc") or (es_data or {}).get("bat_soc") or 0),
-                "bat_power": str((bat_data or {}).get("bat_power") or (es_data or {}).get("bat_power") or 0),
-                "pv_power": str((es_data or {}).get("pv_power") or 0),
-                "ongrid_power": str((es_data or {}).get("ongrid_power") or (es_data or {}).get("grid_power") or 0),
-                "bat_charge_allowed": str((bat_data or {}).get("charg_ag", False)).lower(),
-                "bat_discharge_allowed": str((bat_data or {}).get("dischrg_ag", False)).lower(),
-                "bat_capacity": str((bat_data or {}).get("bat_cap") or (es_data or {}).get("bat_cap") or 0),
-                "total_grid_output_energy": str((es_data or {}).get("total_grid_output_energy") or 0),
+                "bat_soc": str(bat_soc),
+                "bat_power": str(bat_power or 0),
+                "pv_power": str(pv_power),
+                "ongrid_power": str(ongrid_power),
+                "bat_charge_allowed": str(chg_allowed).lower(),
+                "bat_discharge_allowed": str(dchg_allowed).lower(),
+                "bat_capacity": str(bat_capacity or 0),
+                "total_grid_output_energy": "0",
             }
-            _LOGGER.debug("Telemetría real obtenida: %s", telemetry_data)
 
-        # 3) Enviar telemetría y recibir comandos (Spock API)
+            _LOGGER.debug("Telemetría real obtenida (normalizada): %s", telemetry_data)
+
+        # 3) POST a Spock
         _LOGGER.debug("Enviando telemetría a Spock API: %s", telemetry_data)
         headers = {"X-Auth-Token": self.api_token}
 
@@ -282,7 +272,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"Formato de respuesta inesperado: {data}")
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
-                # TODO: Procesar comandos recibidos en 'data'
+                # TODO: Procesar comandos
                 return data
 
         except UpdateFailed:
