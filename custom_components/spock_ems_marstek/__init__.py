@@ -109,11 +109,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return default
 
     async def _async_send_udp_command(
-        self, payload: dict, timeout: float = 5.0, retry: int = 1
+        self, payload: dict, timeout: float = 5.0, retry: int = 3
     ) -> dict:
         """
         Envía un comando UDP a Marstek y espera respuesta.
         Requisitos: mismo puerto en origen y destino (marstek_port), misma LAN.
+        'retry' indica reintentos adicionales (total de intentos = retry + 1).
         """
         loop = asyncio.get_running_loop()
         local_ip = self._resolve_local_ip_for(self.marstek_ip)
@@ -190,18 +191,18 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         bat_data: dict[str, Any] | None = None
         mode_data: dict[str, Any] | None = None
 
-        # 1) Lecturas
+        # 1) Lecturas (todas con 3 reintentos por defecto)
         try:
             # Energy meter (red): total_power por fases/total
             em_payload = {"id": 1, "method": "EM.GetStatus", "params": {"id": 0}}
-            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=1)
+            em_data = await self._async_send_udp_command(em_payload, timeout=5.0)
         except Exception as e:
             _LOGGER.warning("EM.GetStatus falló: %r", e)
 
         try:
             # BMS/batería: SOC / flags / capacidades
             bat_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
-            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=0)
+            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0)
             _LOGGER.debug("Bat.GetStatus (raw): %s", bat_data)
         except Exception as e:
             _LOGGER.warning("Bat.GetStatus falló: %r", e)
@@ -209,7 +210,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             # ES.GetMode: trae 'mode', 'ongrid_power', 'offgrid_power', 'bat_soc'
             mode_payload = {"id": 3, "method": "ES.GetMode", "params": {"id": 0}}
-            mode_data = await self._async_send_udp_command(mode_payload, timeout=5.0, retry=0)
+            mode_data = await self._async_send_udp_command(mode_payload, timeout=5.0)
             _LOGGER.debug("ES.GetMode (raw): %s", mode_data)
         except Exception as e:
             _LOGGER.warning("ES.GetMode falló: %r", e)
@@ -239,7 +240,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             discharg_flag = bool(b.get("dischrg_flag", b.get("dischrg_ag", False)))
 
             # ---- Batería: potencia ----
-            # Requisito del usuario: usar ES.GetMode.ongrid_power como bat_power
+            # Requisito: usar ES.GetMode.ongrid_power como bat_power
             bat_power = m.get("ongrid_power", 0)
 
             # ---- Capacidad ----
