@@ -153,7 +153,9 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return response_data["result"]
 
             except asyncio.TimeoutError:
-                log_fn = _LOGGER.debug if retry == 0 else _LOGGER.warning
+                # DEBUG en reintentos intermedios, WARNING solo en el último
+                is_final = attempt >= retry
+                log_fn = _LOGGER.warning if is_final else _LOGGER.debug
                 log_fn(
                     "Timeout (%.1fs) esperando UDP para %s (intento %d/%d)",
                     timeout,
@@ -161,7 +163,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     attempt + 1,
                     retry + 1,
                 )
-                if attempt >= retry:
+                if is_final:
                     raise
             finally:
                 try:
@@ -263,12 +265,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             telemetry_data = {
                 "plant_id": str(self.plant_id),
                 "bat_soc": str(soc or 0),
-                "bat_power": str(bat_power or 0),            # desde ES.GetMode
-                "pv_power": "0",                              # no disponible en tu FW actual
-                "ongrid_power": str(ongrid_power),           # desde EM.GetStatus
+                "bat_power": str(bat_power or 0),           # desde ES.GetMode
+                "pv_power": "0",                             # no disponible en tu FW actual
+                "ongrid_power": str(ongrid_power),          # desde EM.GetStatus
                 "bat_charge_allowed": str(charg_flag).lower(),
                 "bat_discharge_allowed": str(discharg_flag).lower(),
-                "bat_capacity": str(bat_capacity),           # usa rated_capacity si existe
+                "bat_capacity": str(bat_capacity),          # usa rated_capacity si existe
                 "total_grid_output_energy": "0",
             }
 
