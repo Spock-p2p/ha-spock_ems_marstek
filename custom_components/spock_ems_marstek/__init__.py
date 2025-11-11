@@ -195,14 +195,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # 1) Lecturas (todas con 3 reintentos por defecto)
         try:
-            # Energy meter (red): total_power por fases/total
             em_payload = {"id": 1, "method": "EM.GetStatus", "params": {"id": 0}}
             em_data = await self._async_send_udp_command(em_payload, timeout=5.0)
         except Exception as e:
             _LOGGER.warning("EM.GetStatus falló: %r", e)
 
         try:
-            # BMS/batería: SOC / flags / capacidades
             bat_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
             bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0)
             _LOGGER.debug("Bat.GetStatus (raw): %s", bat_data)
@@ -210,7 +208,6 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("Bat.GetStatus falló: %r", e)
 
         try:
-            # ES.GetMode: trae 'mode', 'ongrid_power', 'offgrid_power', 'bat_soc'
             mode_payload = {"id": 3, "method": "ES.GetMode", "params": {"id": 0}}
             mode_data = await self._async_send_udp_command(mode_payload, timeout=5.0)
             _LOGGER.debug("ES.GetMode (raw): %s", mode_data)
@@ -236,17 +233,17 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             b = bat_data or {}
             m = mode_data or {}
 
-            # ---- Batería: SOC y flags ----
+            # Batería
             soc = b.get("soc", b.get("bat_soc", m.get("bat_soc", 0)))
             charg_flag = bool(b.get("charg_flag", b.get("charg_ag", False)))
             discharg_flag = bool(b.get("dischrg_flag", b.get("dischrg_ag", False)))
 
-            # ---- Batería: potencia ----
-            # Requisito: usar ES.GetMode.ongrid_power como bat_power
-            bat_power = m.get("ongrid_power", 0)
+            # Potencias
+            bat_power = m.get("ongrid_power", 0)       # solicitado por ti
+            ongrid_power = e.get("total_power", 0)     # EM.GetStatus
+            pv_power = 0                               # no disponible en tu FW actual
 
-            # ---- Capacidad ----
-            # Prioriza rated_capacity; si no, bat_capacity/bat_cap; normaliza a entero >=0
+            # Capacidad (usa rated si existe; normaliza a entero)
             raw_rated = b.get("rated_capacity")
             raw_bcap = b.get("bat_capacity", b.get("bat_cap"))
             try:
@@ -259,18 +256,15 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 bat_capacity = 0
             _LOGGER.debug("Capacidad (rated=%r, bat=%r) => enviada=%s", raw_rated, raw_bcap, bat_capacity)
 
-            # ---- Red ----
-            ongrid_power = e.get("total_power", 0)  # si EM no da datos, queda 0
-
             telemetry_data = {
                 "plant_id": str(self.plant_id),
                 "bat_soc": str(soc or 0),
-                "bat_power": str(bat_power or 0),           # desde ES.GetMode
-                "pv_power": "0",                             # no disponible en tu FW actual
-                "ongrid_power": str(ongrid_power),          # desde EM.GetStatus
+                "bat_power": str(bat_power or 0),
+                "pv_power": str(pv_power),
+                "ongrid_power": str(ongrid_power),
                 "bat_charge_allowed": str(charg_flag).lower(),
                 "bat_discharge_allowed": str(discharg_flag).lower(),
-                "bat_capacity": str(bat_capacity),          # usa rated_capacity si existe
+                "bat_capacity": str(bat_capacity),
                 "total_grid_output_energy": "0",
             }
 
@@ -301,8 +295,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"Formato de respuesta inesperado: {data}")
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
-                # TODO: Procesar comandos
-                return data
+
+                # DEVOLVEMOS telemetría + respuesta de Spock para que los sensores la lean
+                return {
+                    "telemetry": telemetry_data,
+                    "spock": data,
+                }
 
         except UpdateFailed:
             raise
