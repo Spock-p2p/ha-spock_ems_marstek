@@ -150,7 +150,8 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return response_data["result"]
 
             except asyncio.TimeoutError:
-                _LOGGER.warning(
+                log_fn = _LOGGER.debug if retry == 0 else _LOGGER.warning
+                log_fn(
                     "Timeout (%.1fs) esperando UDP para %s (intento %d/%d)",
                     timeout,
                     payload.get("method"),
@@ -190,13 +191,14 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             # En tu fw v139, EM.GetStatus devuelve total_power y por fases
             em_payload = {"id": 1, "method": "EM.GetStatus", "params": {"id": 0}}
-            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=1)
+            em_data = await self._async_send_udp_command(em_payload, timeout=5.0, retry=2)
         except Exception as e:
             _LOGGER.warning("EM.GetStatus falló: %r", e)
 
         try:
             bat_payload = {"id": 2, "method": "Bat.GetStatus", "params": {"id": 0}}
-            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=1)
+            bat_data = await self._async_send_udp_command(bat_payload, timeout=5.0, retry=2)
+            _LOGGER.debug("Bat.GetStatus (raw): %s", bat_data)
         except Exception as e:
             _LOGGER.warning("Bat.GetStatus falló: %r", e)
 
@@ -219,19 +221,19 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             e = em_data or {}
 
             # Batería
-            bat_soc      = self._pick(b, "bat_soc", "soc", default=0)
-            bat_power    = self._pick(b, "bat_power", "power", "p_bat", default=0)  # muchos FW no lo exponen
-            chg_allowed  = bool(self._pick(b, "charg_ag", "charg_flag", default=False))
+            bat_soc = self._pick(b, "bat_soc", "soc", default=0)
+            bat_power = self._pick(b, "bat_power", "power", "p_bat", default=0)  # muchos FW no lo exponen
+            chg_allowed = bool(self._pick(b, "charg_ag", "charg_flag", default=False))
             dchg_allowed = bool(self._pick(b, "dischrg_ag", "dischrg_flag", default=False))
-            bat_cap      = self._pick(b, "bat_capacity", "bat_cap", default=0)
-            rated_cap    = self._pick(b, "rated_capacity", default=None)
+            bat_cap = self._pick(b, "bat_capacity", "bat_cap", default=0)
+            rated_cap = self._pick(b, "rated_capacity", default=None)
             bat_capacity = rated_cap if (bat_cap in (0, None) and rated_cap is not None) else bat_cap
 
             # Energía/red (EM.GetStatus)
             # total_power: potencia total medida en red (signo según pinza/instalación).
             ongrid_power = self._pick(e, "total_power", default=0)
             # pv_power no llega por EM.GetStatus en tu FW; dejamos 0 por ahora.
-            pv_power     = 0
+            pv_power = 0
 
             telemetry_data = {
                 "plant_id": str(self.plant_id),
