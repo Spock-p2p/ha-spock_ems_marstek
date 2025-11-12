@@ -5,13 +5,14 @@ import asyncio
 import logging
 import json
 import socket
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -85,6 +86,9 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._local_ip: str | None = None
 
+        # Última orden aplicada (para evitar re-enviar exactamente lo mismo si se desea)
+        self._last_cmd_fingerprint: str | None = None
+
     # ---- Utils ----
     def _resolve_local_ip_for(self, dst_ip: str) -> str:
         """Autodetecta la IP local adecuada hacia dst_ip."""
@@ -107,6 +111,34 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if k in d and d[k] is not None:
                 return d[k]
         return default
+
+    def _week_set_for_today(self) -> int:
+        """Devuelve la máscara week_set para el día actual (L=1, M=2, X=4, J=8, V=16, S=32, D=64)."""
+        now = dt_util.now()
+        return 1 << now.weekday()
+
+    def _default_time_window(self) -> tuple[str, str]:
+        """
+        Devuelve (start_time, end_time) por defecto:
+        - start_time: hora actual redondeada hacia abajo a HH:00
+        - end_time: start_time + 1 hora
+        """
+        now = dt_util.now()
+        start = now.replace(minute=0, second=0, microsecond=0)
+        end = start + timedelta(hours=1)
+        return (start.strftime("%H:%M"), end.strftime("%H:%M"))
+
+    def _weekset_human(self, mask: int) -> str:
+        """Texto humano para week_set (p.ej., 'lunes', 'lunes, martes', 'todos los días')."""
+        if mask == 127:
+            return "todos los días"
+        nombres = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        activos = [nombres[i] for i in range(7) if mask & (1 << i)]
+        if not activos:
+            return "sin días"
+        if len(activos) == 1:
+            return activos[0]
+        return ", ".join(activos)
 
     async def _async_send_udp_command(
         self, payload: dict, timeout: float = 5.0, retry: int = 3
@@ -173,12 +205,121 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         raise asyncio.TimeoutError("Sin respuesta tras reintentos")
 
+    # ---- Construcción y (simulación de) envío de órdenes ----
+    def _build_manual_cfg(
+        self,
+        power: int,
+        start_time: str,
+        end_time: str,
+        week_set: int,
+        enable: int = 1,
+        time_num: int = 6,
+    ) -> dict:
+        """
+        Construye el bloque manual_cfg para ES.SetMode en modo Manual.
+        - power: vatios (+carga / -descarga)
+        - start_time/end_time: "HH:MM"
+        - week_set: máscara de días (L=1, M=2, ..., D=64)
+        - enable: 1 aplica el tramo
+        - time_num: índice del tramo (fijo 6 por tu requisito)
+        """
+        return {
+            "time_num": time_num,
+            "start_time": start_time,
+            "end_time": end_time,
+            "week_set": int(week_set),
+            "power": int(power),
+            "enable": int(enable),
+        }
+
+    async def _apply_spock_command(self, spock: dict[str, Any]) -> None:
+        """
+        Aplica la orden recibida desde Spock (SIMULADA):
+        - operation_mode: 'none' | 'charge' | 'discharge'
+        - action: magnitud en W (siempre positiva en la API Spock)
+        - start_time/end_time/day (opcionales). Si no están, se usan los defaults.
+        """
+        op_mode = (spock.get("operation_mode") or "none").lower()
+        if op_mode == "none":
+            _LOGGER.debug("Spock: operation_mode=none. No se envía orden a Marstek.")
+            self._last_cmd_fingerprint = None
+            return
+
+        # Magnitud de potencia (W) en absoluto -> firmamos según modo
+        raw_action = spock.get("action", 0)
+        try:
+            mag = int(float(raw_action))
+        except Exception:
+            mag = 0
+        if mag < 0:
+            mag = -mag
+
+        if op_mode == "charge":
+            power = +mag
+        elif op_mode == "discharge":
+            power = -mag
+        else:
+            _LOGGER.warning("Spock: operation_mode desconocido: %r. Ignorando.", op_mode)
+            return
+
+        # Ventana horaria / week_set (del payload o por defecto)
+        start_time = spock.get("start_time")
+        end_time = spock.get("end_time")
+        if not (start_time and end_time):
+            start_time, end_time = self._default_time_window()
+
+        day_val = spock.get("day", None)
+        try:
+            week_set = int(day_val) if day_val is not None else self._week_set_for_today()
+        except Exception:
+            week_set = self._week_set_for_today()
+
+        manual_cfg = self._build_manual_cfg(
+            power=power,
+            start_time=start_time,
+            end_time=end_time,
+            week_set=week_set,
+            enable=1,
+            time_num=6,  # fijo, como tu script
+        )
+
+        payload = {
+            "id": 9,
+            "method": "ES.SetMode",
+            "params": {
+                "id": 1,
+                "config": {
+                    "mode": "Manual",
+                    "manual_cfg": manual_cfg,
+                }
+            },
+        }
+
+        # --- ENVÍO DESACTIVADO (SIMULACIÓN) ---
+        modo_txt = "carga" if power > 0 else "descarga"
+        pot_abs = abs(power)
+        week_h = self._weekset_human(int(week_set))
+        _LOGGER.debug("SIMULACIÓN → %s %s, de %s a %s de %s W",
+                      modo_txt, week_h, start_time, end_time, pot_abs)
+        _LOGGER.debug("ES.SetMode payload (NO ENVIADO): %s",
+                      json.dumps(payload, ensure_ascii=False))
+
+        # Si quieres activar el envío real, descomenta el bloque siguiente:
+        # fp = json.dumps(payload, sort_keys=True)
+        # try:
+        #     result = await self._async_send_udp_command(payload, timeout=5.0, retry=3)
+        #     _LOGGER.debug("Respuesta ES.SetMode: %s", result)
+        #     self._last_cmd_fingerprint = fp
+        # except Exception as e:
+        #     _LOGGER.error("Fallo enviando ES.SetMode a Marstek: %s", e)
+
     # ---- Ciclo ----
     async def _async_update_data(self) -> dict[str, Any]:
         """
         1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode)
         2) Envía telemetría a Spock
-        3) Devuelve comandos/estado de Spock
+        3) Procesa orden de Spock -> ES.SetMode (Manual) **SIMULADA**
+        4) Devuelve telemetría + respuesta de Spock
         """
         entry_id = self.config_entry.entry_id
         is_enabled = self.hass.data[DOMAIN].get(entry_id, {}).get("is_enabled", True)
@@ -270,7 +411,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             _LOGGER.debug("Telemetría real obtenida (normalizada): %s", telemetry_data)
 
-        # 3) POST a Spock
+        # 3) POST a Spock (telemetría → comandos)
         _LOGGER.debug("Enviando telemetría a Spock API: %s", telemetry_data)
         headers = {"X-Auth-Token": self.api_token}
 
@@ -296,7 +437,13 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
 
-                # DEVOLVEMOS telemetría + respuesta de Spock para que los sensores la lean
+                # 3.b) Procesar la orden de Spock -> ES.SetMode (Manual) **SIMULADA**
+                try:
+                    await self._apply_spock_command(data)
+                except Exception as cmd_err:
+                    _LOGGER.error("Error aplicando orden de Spock: %s", cmd_err)
+
+                # 4) Devolvemos telemetría + respuesta Spock (para sensores)
                 return {
                     "telemetry": telemetry_data,
                     "spock": data,
