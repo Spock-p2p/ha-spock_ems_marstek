@@ -5,7 +5,7 @@ import asyncio
 import logging
 import json
 import socket
-from datetime import timedelta, datetime
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -85,9 +85,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         self._local_ip: str | None = None
-
-        # Última orden aplicada (para evitar re-enviar exactamente lo mismo si se desea)
-        self._last_cmd_fingerprint: str | None = None
+        self._last_cmd_fingerprint: str | None = None  # por si quieres deduplicar órdenes
 
     # ---- Utils ----
     def _resolve_local_ip_for(self, dst_ip: str) -> str:
@@ -113,15 +111,15 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return default
 
     def _week_set_for_today(self) -> int:
-        """Devuelve la máscara week_set para el día actual (L=1, M=2, X=4, J=8, V=16, S=32, D=64)."""
+        """Máscara week_set para el día actual (L=1, M=2, X=4, J=8, V=16, S=32, D=64)."""
         now = dt_util.now()
         return 1 << now.weekday()
 
     def _default_time_window(self) -> tuple[str, str]:
         """
-        Devuelve (start_time, end_time) por defecto:
-        - start_time: hora actual redondeada hacia abajo a HH:00
-        - end_time: start_time + 1 hora
+        Ventana por defecto:
+        - start_time: HH:00 (hora actual redondeada hacia abajo)
+        - end_time: start_time + 1h
         """
         now = dt_util.now()
         start = now.replace(minute=0, second=0, microsecond=0)
@@ -129,7 +127,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return (start.strftime("%H:%M"), end.strftime("%H:%M"))
 
     def _weekset_human(self, mask: int) -> str:
-        """Texto humano para week_set (p.ej., 'lunes', 'lunes, martes', 'todos los días')."""
+        """Texto humano para week_set (p.ej. 'lunes', 'lunes, martes', 'todos los días')."""
         if mask == 127:
             return "todos los días"
         nombres = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -146,7 +144,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         Envía un comando UDP a Marstek y espera respuesta.
         Requisitos: mismo puerto en origen y destino (marstek_port), misma LAN.
-        'retry' indica reintentos adicionales (total de intentos = retry + 1).
+        'retry' = reintentos adicionales (total intentos = retry + 1).
         """
         loop = asyncio.get_running_loop()
         local_ip = self._resolve_local_ip_for(self.marstek_ip)
@@ -185,7 +183,6 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return response_data["result"]
 
             except asyncio.TimeoutError:
-                # DEBUG en reintentos intermedios, WARNING solo en el último
                 is_final = attempt >= retry
                 log_fn = _LOGGER.warning if is_final else _LOGGER.debug
                 log_fn(
@@ -205,7 +202,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         raise asyncio.TimeoutError("Sin respuesta tras reintentos")
 
-    # ---- Construcción y (simulación de) envío de órdenes ----
+    # ---- Construcción y envío de órdenes ----
     def _build_manual_cfg(
         self,
         power: int,
@@ -221,7 +218,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         - start_time/end_time: "HH:MM"
         - week_set: máscara de días (L=1, M=2, ..., D=64)
         - enable: 1 aplica el tramo
-        - time_num: índice del tramo (fijo 6 por tu requisito)
+        - time_num: índice del tramo (fijo 6)
         """
         return {
             "time_num": time_num,
@@ -234,7 +231,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _apply_spock_command(self, spock: dict[str, Any]) -> None:
         """
-        Aplica la orden recibida desde Spock (SIMULADA):
+        Aplica la orden recibida desde Spock (ENVÍO ACTIVO):
         - operation_mode: 'none' | 'charge' | 'discharge'
         - action: magnitud en W (siempre positiva en la API Spock)
         - start_time/end_time/day (opcionales). Si no están, se usan los defaults.
@@ -295,30 +292,29 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         }
 
-        # --- ENVÍO DESACTIVADO (SIMULACIÓN) ---
+        # Log informativo del comando que vamos a mandar
         modo_txt = "carga" if power > 0 else "descarga"
         pot_abs = abs(power)
         week_h = self._weekset_human(int(week_set))
-        _LOGGER.debug("SIMULACIÓN → %s %s, de %s a %s de %s W",
+        _LOGGER.debug("MANDANDO ORDEN → %s %s, de %s a %s de %s W",
                       modo_txt, week_h, start_time, end_time, pot_abs)
-        _LOGGER.debug("ES.SetMode payload (NO ENVIADO): %s",
-                      json.dumps(payload, ensure_ascii=False))
+        _LOGGER.debug("ES.SetMode payload: %s", json.dumps(payload, ensure_ascii=False))
 
-        # Si quieres activar el envío real, descomenta el bloque siguiente:
-        # fp = json.dumps(payload, sort_keys=True)
-        # try:
-        #     result = await self._async_send_udp_command(payload, timeout=5.0, retry=3)
-        #     _LOGGER.debug("Respuesta ES.SetMode: %s", result)
-        #     self._last_cmd_fingerprint = fp
-        # except Exception as e:
-        #     _LOGGER.error("Fallo enviando ES.SetMode a Marstek: %s", e)
+        # Envío real
+        fp = json.dumps(payload, sort_keys=True)
+        try:
+            result = await self._async_send_udp_command(payload, timeout=5.0, retry=3)
+            _LOGGER.debug("Respuesta ES.SetMode: %s", result)
+            self._last_cmd_fingerprint = fp
+        except Exception as e:
+            _LOGGER.error("Fallo enviando ES.SetMode a Marstek: %s", e)
 
     # ---- Ciclo ----
     async def _async_update_data(self) -> dict[str, Any]:
         """
         1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode)
         2) Envía telemetría a Spock
-        3) Procesa orden de Spock -> ES.SetMode (Manual) **SIMULADA**
+        3) Procesa orden de Spock -> ES.SetMode (Manual)
         4) Devuelve telemetría + respuesta de Spock
         """
         entry_id = self.config_entry.entry_id
@@ -437,7 +433,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
 
-                # 3.b) Procesar la orden de Spock -> ES.SetMode (Manual) **SIMULADA**
+                # 3.b) Procesar la orden de Spock -> ES.SetMode (Manual) (envío activo)
                 try:
                     await self._apply_spock_command(data)
                 except Exception as cmd_err:
