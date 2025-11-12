@@ -247,7 +247,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_cmd_fingerprint = None
             return
 
-        # Magnitud de potencia (W) en absoluto -> firmamos según modo
+        # Magnitud de potencia (W) en absoluto
         raw_action = spock.get("action", 0)
         try:
             mag = int(float(raw_action))
@@ -256,10 +256,13 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if mag < 0:
             mag = -mag
 
+        # ⚠️ Signo invertido según observación del equipo:
+        # - 'charge' recibido implica CARGA real → power negativo
+        # - 'discharge' recibido implica DESCARGA real → power positivo
         if op_mode == "charge":
-            power = +mag
-        elif op_mode == "discharge":
             power = -mag
+        elif op_mode == "discharge":
+            power = +mag
         else:
             _LOGGER.warning("Spock: operation_mode desconocido: %r. Ignorando.", op_mode)
             return
@@ -384,7 +387,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             discharg_flag = bool(b.get("dischrg_flag", b.get("dischrg_ag", False)))
 
             # Potencias
-            bat_power = m.get("ongrid_power", 0)       # solicitado por ti
+            bat_power = m.get("ongrid_power", 0)       # del equipo (tu FW actual)
             ongrid_power = e.get("total_power", 0)     # EM.GetStatus
             pv_power = 0                               # no disponible en tu FW actual
 
