@@ -148,7 +148,10 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         loop = asyncio.get_running_loop()
         local_ip = self._resolve_local_ip_for(self.marstek_ip)
-        command = json.dumps(payload).encode("utf-8")
+
+        # Serialización MINIFICADA (como tu script) para evitar parseos raros
+        command = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        _LOGGER.debug("TX bytes → %r", command)
 
         for attempt in range(retry + 1):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -161,13 +164,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 sock.bind((local_ip, self.marstek_port))
                 _LOGGER.debug(
-                    "UDP %s -> %s:%s (origen %s:%s) payload=%s",
+                    "UDP %s -> %s:%s (origen %s:%s)",
                     local_ip,
                     self.marstek_ip,
                     self.marstek_port,
                     local_ip,
                     self.marstek_port,
-                    command,
                 )
 
                 await loop.sock_sendto(sock, command, (self.marstek_ip, self.marstek_port))
@@ -178,6 +180,9 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("UDP RX de %s: %s", addr, response.decode("utf-8"))
 
                 response_data = json.loads(response.decode("utf-8"))
+                # Aceptamos tanto 'result' como 'error'; si viene 'error', levantamos excepción
+                if "error" in response_data:
+                    raise ValueError(f"Respuesta de error: {response_data}")
                 if response_data.get("id") != payload.get("id") or "result" not in response_data:
                     raise ValueError(f"Respuesta UDP inesperada: {response_data}")
                 return response_data["result"]
@@ -188,7 +193,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 log_fn(
                     "Timeout (%.1fs) esperando UDP para %s (intento %d/%d)",
                     timeout,
-                    payload.get("method"),
+                    payload.get("method", "UNKNOWN"),
                     attempt + 1,
                     retry + 1,
                 )
@@ -280,8 +285,9 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             time_num=6,  # fijo, como tu script
         )
 
+        # --- payload ES.SetMode (usar id=1) ---
         payload = {
-            "id": 9,
+            "id": 1,
             "method": "ES.SetMode",
             "params": {
                 "id": 1,
@@ -292,12 +298,14 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         }
 
-        # Log informativo del comando que vamos a mandar
+        # Log claro del comando que vamos a mandar
         modo_txt = "carga" if power > 0 else "descarga"
         pot_abs = abs(power)
         week_h = self._weekset_human(int(week_set))
-        _LOGGER.debug("MANDANDO ORDEN → %s %s, de %s a %s de %s W",
-                      modo_txt, week_h, start_time, end_time, pot_abs)
+        _LOGGER.debug(
+            "MANDANDO ORDEN → %s %s, de %s a %s de %s W",
+            modo_txt, week_h, start_time, end_time, pot_abs
+        )
         _LOGGER.debug("ES.SetMode payload: %s", json.dumps(payload, ensure_ascii=False))
 
         # Envío real
