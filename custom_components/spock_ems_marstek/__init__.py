@@ -323,7 +323,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---- Ciclo ----
     async def _async_update_data(self) -> dict[str, Any]:
         """
-        1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode)
+        1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode + ES.GetStatus)
         2) Envía telemetría a Spock
         3) Procesa orden de Spock -> ES.SetMode (Manual)
         4) Devuelve telemetría + respuesta de Spock
@@ -340,6 +340,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         em_data: dict[str, Any] | None = None
         bat_data: dict[str, Any] | None = None
         mode_data: dict[str, Any] | None = None
+        es_data: dict[str, Any] | None = None  # >>> NUEVO
 
         # 1) Lecturas (todas con 3 reintentos por defecto)
         try:
@@ -362,8 +363,16 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as e:
             _LOGGER.warning("ES.GetMode falló: %r", e)
 
+        # >>> NUEVO: lectura de ES.GetStatus para obtener pv_power (y futuros campos si quieres)
+        try:
+            es_payload = {"id": 4, "method": "ES.GetStatus", "params": {"id": 0}}
+            es_data = await self._async_send_udp_command(es_payload, timeout=5.0)
+            _LOGGER.debug("ES.GetStatus (raw): %s", es_data)
+        except Exception as e:
+            _LOGGER.warning("ES.GetStatus falló: %r", e)
+
         # 2) Mapeo normalizado
-        if em_data is None and bat_data is None and mode_data is None:
+        if em_data is None and bat_data is None and mode_data is None and es_data is None:  # >>> tocado
             _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando ceros.")
             telemetry_data = {
                 "plant_id": str(self.plant_id),
@@ -380,6 +389,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             e = em_data or {}
             b = bat_data or {}
             m = mode_data or {}
+            es = es_data or {}  # >>> NUEVO
 
             # Batería
             soc = b.get("soc", b.get("bat_soc", m.get("bat_soc", 0)))
@@ -389,7 +399,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Potencias
             bat_power = m.get("ongrid_power", 0)       # del equipo (tu FW actual)
             ongrid_power = e.get("total_power", 0)     # EM.GetStatus
-            pv_power = 0                               # no disponible en tu FW actual
+            pv_power = es.get("pv_power", 0)           # >>> NUEVO: ES.GetStatus
 
             # Capacidad (usa rated si existe; normaliza a entero)
             raw_rated = b.get("rated_capacity")
