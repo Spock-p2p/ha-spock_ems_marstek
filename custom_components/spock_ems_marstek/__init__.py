@@ -237,15 +237,47 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _apply_spock_command(self, spock: dict[str, Any]) -> None:
         """
         Aplica la orden recibida desde Spock (ENVÍO ACTIVO):
-        - operation_mode: 'none' | 'charge' | 'discharge'
-        - action: magnitud en W (siempre positiva en la API Spock)
+        - operation_mode: 'none' | 'charge' | 'discharge' | 'auto'
+        - action: magnitud en W (siempre positiva en la API Spock) [solo charge/discharge]
         - start_time/end_time/day (opcionales). Si no están, se usan los defaults.
         """
         op_mode = (spock.get("operation_mode") or "none").lower()
+
+        # --- Modo NONE: no hacer nada ---
         if op_mode == "none":
             _LOGGER.debug("Spock: operation_mode=none. No se envía orden a Marstek.")
             self._last_cmd_fingerprint = None
             return
+
+        # --- Modo AUTO -> ES.SetMode Auto con auto_cfg.enable=1 ---
+        if op_mode == "auto":
+            payload = {
+                "id": 1,
+                "method": "ES.SetMode",
+                "params": {
+                    "id": 1,
+                    "config": {
+                        "mode": "Auto",
+                        "auto_cfg": {
+                            "enable": 1,
+                        },
+                    },
+                },
+            }
+
+            _LOGGER.debug("Spock: operation_mode=auto. Activando modo Auto en Marstek.")
+            _LOGGER.debug("ES.SetMode (Auto) payload: %s", json.dumps(payload, ensure_ascii=False))
+
+            fp = json.dumps(payload, sort_keys=True)
+            try:
+                result = await self._async_send_udp_command(payload, timeout=5.0, retry=3)
+                _LOGGER.debug("Respuesta ES.SetMode (Auto): %s", result)
+                self._last_cmd_fingerprint = fp
+            except Exception as e:
+                _LOGGER.error("Fallo enviando ES.SetMode Auto a Marstek: %s", e)
+            return
+
+        # --- Resto: charge / discharge (comportamiento EXISTENTE) ---
 
         # Magnitud de potencia (W) en absoluto
         raw_action = spock.get("action", 0)
@@ -325,7 +357,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         1) Lee telemetría (EM.GetStatus + Bat.GetStatus + ES.GetMode + ES.GetStatus)
         2) Envía telemetría a Spock
-        3) Procesa orden de Spock -> ES.SetMode (Manual)
+        3) Procesa orden de Spock -> ES.SetMode (Manual / Auto)
         4) Devuelve telemetría + respuesta de Spock
         """
         entry_id = self.config_entry.entry_id
@@ -340,7 +372,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         em_data: dict[str, Any] | None = None
         bat_data: dict[str, Any] | None = None
         mode_data: dict[str, Any] | None = None
-        es_data: dict[str, Any] | None = None  # >>> NUEVO
+        es_data: dict[str, Any] | None = None  # ES.GetStatus
 
         # 1) Lecturas (todas con 3 reintentos por defecto)
         try:
@@ -363,7 +395,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as e:
             _LOGGER.warning("ES.GetMode falló: %r", e)
 
-        # >>> NUEVO: lectura de ES.GetStatus para obtener pv_power (y futuros campos si quieres)
+        # ES.GetStatus para obtener pv_power y energías
         try:
             es_payload = {"id": 4, "method": "ES.GetStatus", "params": {"id": 0}}
             es_data = await self._async_send_udp_command(es_payload, timeout=5.0)
@@ -372,7 +404,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("ES.GetStatus falló: %r", e)
 
         # 2) Mapeo normalizado
-        if em_data is None and bat_data is None and mode_data is None and es_data is None:  # >>> tocado
+        if em_data is None and bat_data is None and mode_data is None and es_data is None:
             _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando ceros.")
             telemetry_data = {
                 "plant_id": str(self.plant_id),
@@ -389,7 +421,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             e = em_data or {}
             b = bat_data or {}
             m = mode_data or {}
-            es = es_data or {}  # >>> NUEVO
+            es = es_data or {}
 
             # Batería
             soc = b.get("soc", b.get("bat_soc", m.get("bat_soc", 0)))
@@ -399,7 +431,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Potencias
             bat_power = m.get("ongrid_power", 0)       # del equipo (tu FW actual)
             ongrid_power = e.get("total_power", 0)     # EM.GetStatus
-            pv_power = es.get("pv_power", 0)           # >>> NUEVO: ES.GetStatus
+            pv_power = es.get("pv_power", 0)           # ES.GetStatus
 
             # Capacidad (usa rated si existe; normaliza a entero)
             raw_rated = b.get("rated_capacity")
@@ -412,7 +444,12 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 bat_capacity = int(round(cap_num))
             except Exception:
                 bat_capacity = 0
-            _LOGGER.debug("Capacidad (rated=%r, bat=%r) => enviada=%s", raw_rated, raw_bcap, bat_capacity)
+            _LOGGER.debug(
+                "Capacidad (rated=%r, bat=%r) => enviada=%s",
+                raw_rated,
+                raw_bcap,
+                bat_capacity,
+            )
 
             telemetry_data = {
                 "plant_id": str(self.plant_id),
@@ -454,7 +491,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 _LOGGER.debug("Comandos recibidos: %s", data)
 
-                # 3.b) Procesar la orden de Spock -> ES.SetMode (Manual) (envío activo)
+                # 3.b) Procesar la orden de Spock -> ES.SetMode (Manual / Auto) (envío activo)
                 try:
                     await self._apply_spock_command(data)
                 except Exception as cmd_err:
