@@ -1,4 +1,4 @@
-# Spock EMS (Marstek) - Integración para Home Assistant
+# Spock EMS (Marstek Venus-3) - Integración para Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration)
 
