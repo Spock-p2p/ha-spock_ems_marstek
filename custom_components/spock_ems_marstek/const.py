@@ -17,4 +17,4 @@ PLATFORMS: list[str] = ["switch", "sensor"]
 
 # --- Defaults ---
 DEFAULT_MARSTEK_PORT = 30000
-DEFAULT_SCAN_INTERVAL_S = 30
+DEFAULT_SCAN_INTERVAL_S = 60
