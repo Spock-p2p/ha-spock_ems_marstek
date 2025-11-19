@@ -346,7 +346,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         # Log claro del comando que vamos a mandar
-        modo_txt = "carga" if power > 0 else "descarga"
+        modo_txt = "carga" if power < 0 else "descarga"
         pot_abs = abs(power)
         week_h = self._weekset_human(int(week_set))
         _LOGGER.debug(
