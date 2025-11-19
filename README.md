@@ -4,6 +4,8 @@
 
 Esta es una integración personalizada para [Home Assistant (HA)](https://www.home-assistant.io/) que permite monitorizar y recibir datos de un sistema de gestión de energía (EMS) Spock, específicamente para hardware compatible con Marstek.
 
+Válida para baterias Marstek Venus-3 (en breve estará certificada para Marstek Venus-2)
+
 La integración se conecta a los endpoints en la nube de Spock para obtener telemetría en tiempo real de tu instalación (planta).
 
 ** Para utilizar esta integración es imprescindible crear un cuenta en Spock: https://spock.es/register **
