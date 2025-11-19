@@ -138,6 +138,18 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return activos[0]
         return ", ".join(activos)
 
+    def _str_or_none(self, value) -> str | None:
+        """Devuelve str(valor) o None si valor es None."""
+        if value is None:
+            return None
+        return str(value)
+
+    def _bool_str_or_none(self, value) -> str | None:
+        """Devuelve 'true'/'false' o None si value es None."""
+        if value is None:
+            return None
+        return str(bool(value)).lower()
+
     async def _async_send_udp_command(
         self, payload: dict, timeout: float = 5.0, retry: int = 3
     ) -> dict:
@@ -368,7 +380,7 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.debug("Iniciando ciclo de actualización unificado de Spock EMS")
 
-        telemetry_data: dict[str, str] = {}
+        telemetry_data: dict[str, Any] = {}
         em_data: dict[str, Any] | None = None
         bat_data: dict[str, Any] | None = None
         mode_data: dict[str, Any] | None = None
@@ -405,17 +417,17 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # 2) Mapeo normalizado
         if em_data is None and bat_data is None and mode_data is None and es_data is None:
-            _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando ceros.")
+            _LOGGER.warning("No se pudo obtener telemetría de Marstek. Enviando nulls.")
             telemetry_data = {
                 "plant_id": str(self.plant_id),
-                "bat_soc": "0",
-                "bat_power": "0",
-                "pv_power": "0",
-                "ongrid_power": "0",
-                "bat_charge_allowed": "false",
-                "bat_discharge_allowed": "false",
-                "bat_capacity": "0",
-                "total_grid_output_energy": "0",
+                "bat_soc": None,
+                "bat_power": None,
+                "pv_power": None,
+                "ongrid_power": None,
+                "bat_charge_allowed": None,
+                "bat_discharge_allowed": None,
+                "bat_capacity": None,
+                "total_grid_output_energy": None,
             }
         else:
             e = em_data or {}
@@ -424,26 +436,49 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             es = es_data or {}
 
             # Batería
-            soc = b.get("soc", b.get("bat_soc", m.get("bat_soc", 0)))
-            charg_flag = bool(b.get("charg_flag", b.get("charg_ag", False)))
-            discharg_flag = bool(b.get("dischrg_flag", b.get("dischrg_ag", False)))
+            soc = b.get("soc", b.get("bat_soc", m.get("bat_soc")))
+
+            raw_charg_flag = b.get("charg_flag", b.get("charg_ag"))
+            raw_dischrg_flag = b.get("dischrg_flag", b.get("dischrg_ag"))
+
+            if raw_charg_flag is None:
+                charg_flag: bool | None = None
+            else:
+                charg_flag = bool(raw_charg_flag)
+
+            if raw_dischrg_flag is None:
+                discharg_flag: bool | None = None
+            else:
+                discharg_flag = bool(raw_dischrg_flag)
 
             # Potencias
-            bat_power = m.get("ongrid_power", 0)       # del equipo (tu FW actual)
-            ongrid_power = e.get("total_power", 0)     # EM.GetStatus
-            pv_power = es.get("pv_power", 0)           # ES.GetStatus
+            bat_power = m.get("ongrid_power")       # del equipo (tu FW actual)
+            ongrid_power = e.get("total_power")     # EM.GetStatus
+            pv_power = es.get("pv_power")           # ES.GetStatus
 
-            # Capacidad (usa rated si existe; normaliza a entero)
+            # Capacidad (usa rated si existe; normaliza a entero o None)
             raw_rated = b.get("rated_capacity")
             raw_bcap = b.get("bat_capacity", b.get("bat_cap"))
+
+            bat_capacity: int | None
             try:
-                cap = raw_rated if raw_rated is not None else (raw_bcap if raw_bcap is not None else 0)
-                cap_num = float(cap)
-                if cap_num < 0:
-                    cap_num = 0.0
-                bat_capacity = int(round(cap_num))
+                cap_num: float | None
+                if raw_rated is not None:
+                    cap_num = float(raw_rated)
+                elif raw_bcap is not None:
+                    cap_num = float(raw_bcap)
+                else:
+                    cap_num = None
+
+                if cap_num is None:
+                    bat_capacity = None
+                else:
+                    if cap_num < 0:
+                        cap_num = 0.0
+                    bat_capacity = int(round(cap_num))
             except Exception:
-                bat_capacity = 0
+                bat_capacity = None
+
             _LOGGER.debug(
                 "Capacidad (rated=%r, bat=%r) => enviada=%s",
                 raw_rated,
@@ -453,14 +488,14 @@ class SpockEnergyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             telemetry_data = {
                 "plant_id": str(self.plant_id),
-                "bat_soc": str(soc or 0),
-                "bat_power": str(bat_power or 0),
-                "pv_power": str(pv_power),
-                "ongrid_power": str(ongrid_power),
-                "bat_charge_allowed": str(charg_flag).lower(),
-                "bat_discharge_allowed": str(discharg_flag).lower(),
-                "bat_capacity": str(bat_capacity),
-                "total_grid_output_energy": "0",
+                "bat_soc": self._str_or_none(soc),
+                "bat_power": self._str_or_none(bat_power),
+                "pv_power": self._str_or_none(pv_power),
+                "ongrid_power": self._str_or_none(ongrid_power),
+                "bat_charge_allowed": self._bool_str_or_none(charg_flag),
+                "bat_discharge_allowed": self._bool_str_or_none(discharg_flag),
+                "bat_capacity": self._str_or_none(bat_capacity),
+                "total_grid_output_energy": None,  # aún no lo tenemos → null
             }
 
             _LOGGER.debug("Telemetría real obtenida (normalizada): %s", telemetry_data)
