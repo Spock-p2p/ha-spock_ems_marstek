@@ -46,16 +46,16 @@ La integración se conecta a los endpoints en la nube de Spock para obtener tele
 
 ---
 
-### Configuración
+## Configuración
 
-## Parámetros de Configuración
+### Parámetros de Configuración
 
 1.   IP bateria Marstek (Requerido): IP de la batería Marstek
 2.   Plant_id (Requerido): El identificador único dentro de Spock (plant_id) de tu instalación.
 3.   Auth_token (Requerido): El token de autenticación (X-Auth-Token) necesario para acceder a la API de Spock.
 4.   UDP Port: Puerto UDP API Marstek (por defecto 30000). Generalmente no se tiene que modificar.
 
-## Entidades Creadas
+### Entidades Creadas
 
 Una vez configurada y reiniciada, la integración creará automáticamente las siguientes entidades (con el prefijo sensor.spock_ems_):
 
@@ -68,6 +68,6 @@ Una vez configurada y reiniciada, la integración creará automáticamente las s
 
 (Nota: Los nombres de las entidades pueden variar ligeramente. Revisa tu panel de "Entidades" en Home Assistant después de la instalación).
 
-### Contribuciones
+## Contribuciones
 
 Las contribuciones son bienvenidas. Por favor, abre un "issue" para reportar bugs o un "pull request" para proponer mejoras.
