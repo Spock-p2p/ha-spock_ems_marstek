@@ -19,7 +19,6 @@ La integración se conecta a los endpoints en la nube de Spock para obtener tele
     * Estado de Carga de la Batería (SOC)
     * Potencia de la Red (importación/exportación)
     * ... (y otros sensores relevantes)
-* Se configura fácilmente a través del `configuration.yaml`.
 
 ---
 
@@ -47,21 +46,14 @@ La integración se conecta a los endpoints en la nube de Spock para obtener tele
 
 ---
 
-## Configuración
-
-Una vez instalada la integración, debes añadir la siguiente configuración a tu archivo `configuration.yaml`:
-
-sensor:
-  - platform: spock_ems_marstek
-    plant_id: "TU_PLANT_ID"
-    auth_token: "TU_X_AUTH_TOKEN_SECRETO"
-    scan_interval: 60 # Opcional: intervalo en segundos (default: 60)
+### Configuración
 
 ## Parámetros de Configuración
 
-1.   Platform (Requerido): Debe ser spock_ems_marstek.
-2.   Plant_id (Requerido): El identificador único (plant_id) de tu instalación.
-3.   Auth_token (Requerido): El token de autenticación (X-Auth-Token) necesario para acceder a la API.
+1.   IP bateria Marstek (Requerido): IP de la batería Marstek
+2.   Plant_id (Requerido): El identificador único dentro de Spock (plant_id) de tu instalación.
+3.   Auth_token (Requerido): El token de autenticación (X-Auth-Token) necesario para acceder a la API de Spock.
+4.   UDP Port: Puerto UDP API Marstek (por defecto 30000). Generalmente no se tiene que modificar.
 
 ## Entidades Creadas
 
